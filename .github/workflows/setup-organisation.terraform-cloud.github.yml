@@ -1,0 +1,166 @@
+name: 'Setup Organization'
+on:
+  workflow_dispatch:
+
+jobs:
+  create-terraform-organization:
+    name: 'Create organization on Terraform Cloud'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get current repository organization
+        id: repo_org
+        run: |
+          org_name=$(echo $GITHUB_REPOSITORY | cut -d '/' -f 1)
+          echo "Organization: $org_name"
+          echo "org_name=$org_name" >> $GITHUB_ENV
+
+      - name: Get organization owner email
+        id: org_owner_email
+        env:
+          GITHUB_TOKEN: ${{ secrets.SETUP_TOKEN }}
+        run: |
+          org_owner_username=$(curl -s --request GET \
+            --url https://api.github.com/orgs/$org_name/members \
+            --header "Authorization: token $GITHUB_TOKEN" \
+            --header 'Content-Type: application/vnd.api+json' \
+            | jq '.[] | .login' \
+            | head -n 1 \
+            | tr -d '"')
+          org_owner_email=$(curl -s --request GET \
+            --url https://api.github.com/users/$org_owner_username \
+            --header "Authorization: token $GITHUB_TOKEN" \
+            --header 'Content-Type: application/vnd.api+json' \
+            | jq -r '.email')
+          echo "Organization owner login: $org_owner_username"
+          echo "Organization owner email: $org_owner_email"
+          echo "org_owner_email=$org_owner_email" >> $GITHUB_ENV
+
+
+      - name: Prepare payload
+        run: >-
+          (jq -r '.' <<< '{
+            "data": {
+                "type": "organizations",
+                "attributes": {
+                  "name": "'"$org_name"'",
+                  "email": "'"$org_owner_email"'"
+                }
+            }
+          }'
+          ) > payload
+
+      - name: Create organization api request
+        env:
+          TF_CLOUD_API_TOKEN: ${{ secrets.TF_CLOUD_PERSONAL_API_TOKEN }}
+        run: >-
+          curl
+          --header "Authorization: Bearer $TF_CLOUD_API_TOKEN"
+          --header "Content-Type: application/vnd.api+json"
+          --request POST
+          --data @payload
+          --url https://app.terraform.io/api/v2/organizations
+
+
+  create_team_token:
+    needs:
+      - create-terraform-organization
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get current repository organization
+        id: repo_org
+        run: |
+          org_name=$(echo $GITHUB_REPOSITORY | cut -d '/' -f 1)
+          echo "Organization: $org_name"
+          echo "org_name=$org_name" >> $GITHUB_ENV
+
+      - name: List Terraform Cloud organization teams and get the first one
+        id: first_team
+        env:
+          TF_CLOUD_API_TOKEN: ${{ secrets.TF_CLOUD_PERSONAL_API_TOKEN }}
+        run: |
+          team_id=$(curl -s --request GET \
+            --url https://app.terraform.io/api/v2/organizations/$org_name/teams \
+            --header "Authorization: Bearer $TF_CLOUD_API_TOKEN" \
+            --header 'Content-Type: application/vnd.api+json' \
+            | jq -r '.data[0].id')
+          echo "First team ID: $team_id"
+          echo "team_id=$team_id" >> $GITHUB_ENV
+
+      - name: Create an API token for the owners team
+        env:
+          TF_CLOUD_API_TOKEN: ${{ secrets.TF_CLOUD_PERSONAL_API_TOKEN }}
+        run: |
+          token_value=$(curl --request POST \
+            --url https://app.terraform.io/api/v2/teams/$team_id/authentication-token \
+            --header "Authorization: Bearer $TF_CLOUD_API_TOKEN" \
+            --header 'Content-Type: application/vnd.api+json' \
+           | jq -r '.data.attributes.token')
+          echo "::add-mask::$token_value"
+          echo "TOKEN_VALUE=$token_value" >> $GITHUB_ENV
+    
+
+      - name: Set the team token as repository secret
+        uses: gliech/create-github-secret-action@v1
+        with:
+          name: TF_API_TOKEN
+          location: ${{ env.org_name }}
+          value: ${{ env.TOKEN_VALUE }}
+          org_visibility: all
+          pa_token: ${{ secrets.SETUP_TOKEN }}
+
+  create_workspace:
+    needs:
+      - create_team_token
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get current repository organization
+        id: repo_org
+        run: |
+          org_name=$(echo $GITHUB_REPOSITORY | cut -d '/' -f 1)
+          echo "Organization: $org_name"
+          echo "org_name=$org_name" >> $GITHUB_ENV
+
+      - name: Create Terraform Cloud workspace
+        env:
+          TF_CLOUD_API_TOKEN: ${{ secrets.TF_CLOUD_PERSONAL_API_TOKEN }}
+          WORKSPACE_NAME: organization
+        run: |
+          curl --request POST \
+            --url https://app.terraform.io/api/v2/organizations/$org_name/workspaces \
+            --header "Authorization: Bearer $TF_CLOUD_API_TOKEN" \
+            --header 'Content-Type: application/vnd.api+json' \
+            --data '{
+              "data": {
+                "type": "workspaces",
+                "attributes": {
+                  "name": "'"$WORKSPACE_NAME"'"
+                }
+              }
+            }'
+
+  create-repo:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get current repository organization
+        id: repo_org
+        run: |
+          org_name=$(echo $GITHUB_REPOSITORY | cut -d '/' -f 1)
+          echo "Organization: $org_name"
+          echo "org_name=$org_name" >> $GITHUB_ENV
+
+      - name: Create a new repository from a template
+        env:
+          GITHUB_TOKEN: ${{ secrets.SETUP_TOKEN }}
+        run: |
+          curl -L -X POST \
+          -H "Accept: application/vnd.github+json" \
+          -H "Authorization: Bearer $GITHUB_TOKEN" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          https://api.github.com/repos/codingones/dotgithub/generate \
+          -d '{
+          "owner": "${{ env.org_name }}",
+          "name": ".github",
+          "description": "This is your organisation presentation repository",
+          "include_all_branches": false,
+          "private": false
+          }'
