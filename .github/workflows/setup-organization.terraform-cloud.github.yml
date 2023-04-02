@@ -108,7 +108,7 @@ jobs:
           org_visibility: all
           pa_token: ${{ secrets.SETUP_TOKEN }}
 
-  create_workspace:
+  create_workspace_with_variables:
     needs:
       - create_team_token
     runs-on: ubuntu-latest
@@ -125,18 +125,63 @@ jobs:
           TF_CLOUD_API_TOKEN: ${{ secrets.TF_CLOUD_PERSONAL_API_TOKEN }}
           WORKSPACE_NAME: organization
         run: |
-          curl --request POST \
+          workspace_id=$(curl --request POST \
             --url https://app.terraform.io/api/v2/organizations/$org_name/workspaces \
             --header "Authorization: Bearer $TF_CLOUD_API_TOKEN" \
             --header 'Content-Type: application/vnd.api+json' \
-            --data '{
-              "data": {
-                "type": "workspaces",
-                "attributes": {
-                  "name": "'"$WORKSPACE_NAME"'"
+            --data '{ 
+              "data": { 
+                "type": "workspaces", 
+                "attributes": { 
+                  "name": "'"$WORKSPACE_NAME"'" 
                 }
               }
-            }'
+            }' \
+          | jq -r '.data.id')
+          echo "workspace_id=$workspace_id" >> $GITHUB_ENV
+
+      - name: Add 'organization_name' and 'github_token' variables to workspace
+        env:
+          TF_CLOUD_API_TOKEN: ${{ secrets.TF_CLOUD_PERSONAL_API_TOKEN }}
+          WORKSPACE_ID: ${{ env.workspace_id }}
+          ORG_NAME: ${{ env.org_name }}
+          GITHUB_TOKEN: ${{ secrets.SETUP_TOKEN }}
+        run: |
+          curl -s --request POST \
+            --url "https://app.terraform.io/api/v2/workspaces/$WORKSPACE_ID/vars" \
+            --header "Authorization: Bearer $TF_CLOUD_API_TOKEN" \
+            --header 'Content-Type: application/vnd.api+json' \
+            --data "{
+              \"data\": {
+                \"type\": \"vars\",
+                \"attributes\": {
+                  \"key\": \"organization_name\",
+                  \"value\": \"$ORG_NAME\",
+                  \"description\": \"organization name on github\",
+                  \"category\": \"terraform\",
+                  \"hcl\": false,
+                  \"sensitive\": false
+                }
+              }
+            }"
+          
+          curl -s --request POST \
+            --url "https://app.terraform.io/api/v2/workspaces/$WORKSPACE_ID/vars" \
+            --header "Authorization: Bearer $TF_CLOUD_API_TOKEN" \
+            --header 'Content-Type: application/vnd.api+json' \
+            --data "{
+              \"data\": {
+                \"type\": \"vars\",
+                \"attributes\": {
+                  \"key\": \"github_token\",
+                  \"value\": \"$GITHUB_TOKEN\",
+                  \"description\": \"Github personnal access token that have the rights to manage the organization infrastructure\",
+                  \"category\": \"terraform\",
+                  \"hcl\": false,
+                  \"sensitive\": true
+                }
+              }
+            }"
 
   create-repo:
     runs-on: ubuntu-latest
@@ -160,7 +205,7 @@ jobs:
           -d '{
           "owner": "${{ env.org_name }}",
           "name": ".github",
-          "description": "This is your organisation presentation repository",
+          "description": "This is your organization presentation repository",
           "include_all_branches": false,
           "private": false
           }'
@@ -168,7 +213,7 @@ jobs:
   remove-terraform-cloud-personal-token:
     runs-on: ubuntu-latest
     needs:
-      - create_workspace
+      - create_workspace_with_variables
     steps:
       - name: Remove TF_CLOUD_PERSONAL_API_TOKEN from organization secrets (a personal token has too many rights on TF Cloud)
         env:
@@ -181,7 +226,6 @@ jobs:
             -H "Authorization: token $GITHUB_TOKEN" \
             "https://api.github.com/orgs/$org_name/actions/secrets/TF_CLOUD_PERSONAL_API_TOKEN"
           echo "TF_CLOUD_PERSONAL_API_TOKEN has been removed from organization secrets."
-  
 
   delete-repo:
     runs-on: ubuntu-latest
@@ -198,4 +242,5 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: token $GITHUB_TOKEN" \
             "https://api.github.com/repos/${{ github.repository }}"
-          echo "Repository has been deleted."
+  
+      
