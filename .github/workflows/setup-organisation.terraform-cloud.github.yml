@@ -172,7 +172,7 @@ jobs:
     steps:
       - name: Remove TF_CLOUD_PERSONAL_API_TOKEN from organization secrets (a personal token has too many rights on TF Cloud)
         env:
-          GITHUB_TOKEN: ${{ secrets.YOUR_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.SETUP_TOKEN }}
         run: |
           org_name=$(echo $GITHUB_REPOSITORY | cut -d '/' -f 1)
           echo "Removing TF_CLOUD_PERSONAL_API_TOKEN from organization secrets..."
