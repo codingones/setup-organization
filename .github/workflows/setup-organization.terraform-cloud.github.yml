@@ -3,22 +3,18 @@ on:
   workflow_dispatch:
 
 jobs:
-  create-terraform-organization:
-    name: 'Create organization on Terraform Cloud'
+  apply-terraform:
     runs-on: ubuntu-latest
     steps:
-      - name: Get current repository organization
+      - name: Get necessary variables
         id: repo_org
+        env:
+          GITHUB_TOKEN: ${{ secrets.SETUP_TOKEN }}
         run: |
           org_name=$(echo $GITHUB_REPOSITORY | cut -d '/' -f 1)
           echo "Organization: $org_name"
           echo "org_name=$org_name" >> $GITHUB_ENV
 
-      - name: Get organization owner email
-        id: org_owner_email
-        env:
-          GITHUB_TOKEN: ${{ secrets.SETUP_TOKEN }}
-        run: |
           org_owner_username=$(curl -s --request GET \
             --url https://api.github.com/orgs/$org_name/members \
             --header "Authorization: token $GITHUB_TOKEN" \
@@ -26,162 +22,80 @@ jobs:
             | jq '.[] | .login' \
             | head -n 1 \
             | tr -d '"')
+
           org_owner_email=$(curl -s --request GET \
             --url https://api.github.com/users/$org_owner_username \
             --header "Authorization: token $GITHUB_TOKEN" \
             --header 'Content-Type: application/vnd.api+json' \
             | jq -r '.email')
+
           echo "Organization owner login: $org_owner_username"
           echo "Organization owner email: $org_owner_email"
           echo "org_owner_email=$org_owner_email" >> $GITHUB_ENV
 
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.SETUP_TOKEN }}
 
-      - name: Prepare payload
-        run: >-
-          (jq -r '.' <<< '{
-            "data": {
-                "type": "organizations",
-                "attributes": {
-                  "name": "'"$org_name"'",
-                  "email": "'"$org_owner_email"'"
-                }
-            }
-          }'
-          ) > payload
+      - name: Replace ORGANIZATION_NAME with the actual organization name
+        uses: jacobtomlinson/gha-find-replace@v3
+        with:
+          find: "ORGANIZATION_NAME"
+          replace: ${{ env.org_name }}
+          include: "**"
+          regex: false
 
-      - name: Create organization api request
-        env:
-          TF_CLOUD_API_TOKEN: ${{ secrets.TF_CLOUD_PERSONAL_API_TOKEN }}
-        run: >-
-          curl
-          --header "Authorization: Bearer $TF_CLOUD_API_TOKEN"
-          --header "Content-Type: application/vnd.api+json"
-          --request POST
-          --data @payload
-          --url https://app.terraform.io/api/v2/organizations
+      - name: Replace USER_EMAIL with the actual user email
+        uses: jacobtomlinson/gha-find-replace@v3
+        with:
+          find: "USER_EMAIL"
+          replace: ${{ env.org_owner_email }}
+          include: "**"
+          regex: false
 
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          cli_config_credentials_token: ${{ secrets.TF_CLOUD_PERSONAL_API_TOKEN }}
 
-  create_team_token:
+      - name: Terraform Format
+        id: fmt
+        run: terraform fmt -check
+
+      - name: Terraform Init
+        id: init
+        run: terraform init
+
+      - name: Terraform Validate
+        id: validate
+        run: terraform validate -no-color
+
+      - name: Terraform Apply
+        if: github.ref == 'refs/heads/main'
+        run: |
+          terraform apply -auto-approve -input=false
+
+      - name: Get team_token output
+        run: |
+          team_token=$(terraform output -raw team_token)
+          echo "::add-mask::$team_token"
+          echo "team_token=$team_token" >> $GITHUB_ENV
+
+  set-team-token:
     needs:
-      - create-terraform-organization
+      - apply-terraform
     runs-on: ubuntu-latest
     steps:
-      - name: Get current repository organization
-        id: repo_org
-        run: |
-          org_name=$(echo $GITHUB_REPOSITORY | cut -d '/' -f 1)
-          echo "Organization: $org_name"
-          echo "org_name=$org_name" >> $GITHUB_ENV
-
-      - name: List Terraform Cloud organization teams and get the 'owners' default team
-        id: first_team
-        env:
-          TF_CLOUD_API_TOKEN: ${{ secrets.TF_CLOUD_PERSONAL_API_TOKEN }}
-        run: |
-          team_id=$(curl -s --request GET \
-            --url https://app.terraform.io/api/v2/organizations/$org_name/teams \
-            --header "Authorization: Bearer $TF_CLOUD_API_TOKEN" \
-            --header 'Content-Type: application/vnd.api+json' \
-            | jq -r '.data[0].id')
-          echo "First team ID: $team_id"
-          echo "team_id=$team_id" >> $GITHUB_ENV
-
-      - name: Create an API token for the owners team
-        env:
-          TF_CLOUD_API_TOKEN: ${{ secrets.TF_CLOUD_PERSONAL_API_TOKEN }}
-        run: |
-          token_value=$(curl --request POST \
-            --url https://app.terraform.io/api/v2/teams/$team_id/authentication-token \
-            --header "Authorization: Bearer $TF_CLOUD_API_TOKEN" \
-            --header 'Content-Type: application/vnd.api+json' \
-           | jq -r '.data.attributes.token')
-          echo "::add-mask::$token_value"
-          echo "TOKEN_VALUE=$token_value" >> $GITHUB_ENV
-    
-
       - name: Set the team token as organization secrets
         uses: gliech/create-github-secret-action@v1
         with:
           name: TF_API_TOKEN
           location: ${{ env.org_name }}
-          value: ${{ env.TOKEN_VALUE }}
+          value: ${{ env.team_token }}
           org_visibility: all
           pa_token: ${{ secrets.SETUP_TOKEN }}
 
-  create_workspace_with_variables:
-    needs:
-      - create_team_token
-    runs-on: ubuntu-latest
-    steps:
-      - name: Get current repository organization
-        id: repo_org
-        run: |
-          org_name=$(echo $GITHUB_REPOSITORY | cut -d '/' -f 1)
-          echo "Organization: $org_name"
-          echo "org_name=$org_name" >> $GITHUB_ENV
-
-      - name: Create Terraform Cloud workspace
-        env:
-          TF_CLOUD_API_TOKEN: ${{ secrets.TF_CLOUD_PERSONAL_API_TOKEN }}
-          WORKSPACE_NAME: organization
-        run: |
-          workspace_id=$(curl --request POST \
-            --url https://app.terraform.io/api/v2/organizations/$org_name/workspaces \
-            --header "Authorization: Bearer $TF_CLOUD_API_TOKEN" \
-            --header 'Content-Type: application/vnd.api+json' \
-            --data '{ 
-              "data": { 
-                "type": "workspaces", 
-                "attributes": { 
-                  "name": "'"$WORKSPACE_NAME"'" 
-                }
-              }
-            }' \
-          | jq -r '.data.id')
-          echo "workspace_id=$workspace_id" >> $GITHUB_ENV
-
-      - name: Add 'organization_name' and 'github_token' variables to workspace
-        env:
-          TF_CLOUD_API_TOKEN: ${{ secrets.TF_CLOUD_PERSONAL_API_TOKEN }}
-          WORKSPACE_ID: ${{ env.workspace_id }}
-          ORG_NAME: ${{ env.org_name }}
-          GITHUB_TOKEN: ${{ secrets.SETUP_TOKEN }}
-        run: |
-          curl -s --request POST \
-            --url "https://app.terraform.io/api/v2/workspaces/$WORKSPACE_ID/vars" \
-            --header "Authorization: Bearer $TF_CLOUD_API_TOKEN" \
-            --header 'Content-Type: application/vnd.api+json' \
-            --data "{
-              \"data\": {
-                \"type\": \"vars\",
-                \"attributes\": {
-                  \"key\": \"organization_name\",
-                  \"value\": \"$ORG_NAME\",
-                  \"description\": \"organization name on github\",
-                  \"category\": \"terraform\",
-                  \"hcl\": false,
-                  \"sensitive\": false
-                }
-              }
-            }"
-          
-          curl -s --request POST \
-            --url "https://app.terraform.io/api/v2/workspaces/$WORKSPACE_ID/vars" \
-            --header "Authorization: Bearer $TF_CLOUD_API_TOKEN" \
-            --header 'Content-Type: application/vnd.api+json' \
-            --data "{
-              \"data\": {
-                \"type\": \"vars\",
-                \"attributes\": {
-                  \"key\": \"github_token\",
-                  \"value\": \"$GITHUB_TOKEN\",
-                  \"description\": \"Github personnal access token that have the rights to manage the organization infrastructure\",
-                  \"category\": \"terraform\",
-                  \"hcl\": false,
-                  \"sensitive\": true
-                }
-              }
-            }"
 
   create-repo:
     runs-on: ubuntu-latest
@@ -234,7 +148,7 @@ jobs:
           include: "**"
           regex: false
 
-      - name: Replace ORGANIZATION_NAME with the actual organization name
+      - name: Replace USER_NAME with the actual user name
         uses: jacobtomlinson/gha-find-replace@v3
         with:
           find: "USER_NAME"
@@ -242,7 +156,7 @@ jobs:
           include: "**"
           regex: false
 
-      - name: Replace ORGANIZATION_NAME with the actual organization name
+      - name: Replace USER_EMAIL with the actual user email
         uses: jacobtomlinson/gha-find-replace@v3
         with:
           find: "USER_EMAIL"
@@ -262,7 +176,7 @@ jobs:
   remove-terraform-cloud-personal-token:
     runs-on: ubuntu-latest
     needs:
-      - create_workspace_with_variables
+      - set-team-token
     steps:
       - name: Remove TF_CLOUD_PERSONAL_API_TOKEN from organization secrets (a personal token has too many rights on TF Cloud)
         env:

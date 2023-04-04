@@ -6,8 +6,9 @@ Ce dépot met en place l'aspect organizationel d'un projet qui comprends actuell
 - Un 'workspace' terraform cloud nommé 'organization' qui pourra servir à héberger la définition des repository
 - Un 'team token' terraform cloud qui permet de gérer l'organization terraform (et n'as pas de droits sur vos autres organizations !)
 - Une 'organization' github
-- Un repos '.github' qui comprends un README.md dédié à la présentation de votre organization
-    - la capacité de déployer rapidement via terraform des dépots templates avec les configurations appropriées à vos projets
+- Un repos '.github' qui comprends :
+  - un README.md dédié à la présentation de votre organization
+  - la capacité de déployer rapidement via terraform des dépots templates avec les configurations appropriées à vos projets
 
 
 # Utilisation pas-à-pas:
@@ -23,4 +24,3 @@ Ce dépot met en place l'aspect organizationel d'un projet qui comprends actuell
   - vous devez avoir un fork de ce dépot dans une de vos organizations pour qu'il apparaisse 
   - attention à bien mettre votre nouvelle organization comme "owner" du dépot
 - Run l'action 'Setup Organization' dans https://github.com/YOUR_ORG_NAME/YOUR_GENERATED_SETUP_REPOSITORY/actions
-- Supprimez le SETUP_TOKEN des variables de l'organization
