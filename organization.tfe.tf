@@ -25,17 +25,12 @@ resource "tfe_variable" "var_organization_name" {
   description  = "organization name on github and terraform cloud"
 }
 
-output "team_token" {
-  value     = tfe_team_token.team_token.token
-  sensitive = true
+resource "tfe_variable" "tfe_team_token" {
+  key          = "tfe_team_token"
+  value        = tfe_team_token.team_token.token
+  category     = "env"
+  workspace_id = tfe_workspace.organization_workspace.id
+  description  = "organization name on github and terraform cloud"
+  sensitive    = true
 }
-
-
-#resource "tfe_variable" "var_github_token" {
-#  key          = "github_token"
-#  value        = var.github_token
-#  category     = "terraform"
-#  workspace_id = tfe_workspace.organization_workspace.id
-#  description  = "organization name on github and terraform cloud"
-#}
 

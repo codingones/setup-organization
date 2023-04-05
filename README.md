@@ -11,6 +11,9 @@ Ce dépot met en place l'aspect organizationel d'un projet qui comprends actuell
   - la capacité de déployer rapidement via terraform des dépots templates avec les configurations appropriées à vos projets
 
 
+# TODO Better way to manage secrets by using a github app / oauth instead of a PAT.
+
+
 # Utilisation pas-à-pas:
 - Faites un fork de ce repos (par exemple sur votre espace personnel)
 - Créez votre organization projet / client (https://github.com/settings/organizations) => "New Organization"
