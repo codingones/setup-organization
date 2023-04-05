@@ -74,6 +74,8 @@ jobs:
 
       - name: Terraform Apply
         if: github.ref == 'refs/heads/main'
+        env:
+          TFE_TOKEN: ${{ secrets.TF_CLOUD_PERSONAL_API_TOKEN }}
         run: |
           terraform apply -auto-approve -input=false -var="github_token=${{ secrets.SETUP_TOKEN }}"
 
@@ -88,14 +90,16 @@ jobs:
         run: |
           org_name=$(echo $GITHUB_REPOSITORY | cut -d '/' -f 1)
           echo "Removing TF_CLOUD_PERSONAL_API_TOKEN from organization secrets..."
-          curl -X DELETE \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: token $GITHUB_TOKEN" \
-            "https://api.github.com/orgs/$org_name/actions/secrets/TF_CLOUD_PERSONAL_API_TOKEN"
-          echo "TF_CLOUD_PERSONAL_API_TOKEN has been removed from organization secrets."
+        #curl -X DELETE \
+        #  -H "Accept: application/vnd.github+json" \
+        #  -H "Authorization: token $GITHUB_TOKEN" \
+        #  "https://api.github.com/orgs/$org_name/actions/secrets/TF_CLOUD_PERSONAL_API_TOKEN"
+        #echo "TF_CLOUD_PERSONAL_API_TOKEN has been removed from organization secrets."
 
   create-repo:
     runs-on: ubuntu-latest
+    needs:
+      - apply-terraform
     steps:
       - name: Get current repository organization
         id: repo_org
@@ -168,20 +172,20 @@ jobs:
           git diff --quiet && git diff --staged --quiet || git commit -m "Replace ORGANIZATION_NAME, USER_NAME, USER_EMAIL with the actual values"
           git push
 
-  #delete-repo:
-  #  runs-on: ubuntu-latest
-  #  needs:
-  #    - create-repo
-  #    - remove-terraform-cloud-personal-token
-  #  steps:
-  #    - name: Delete this repository
-  #      env:
-  #        GITHUB_TOKEN: ${{ secrets.SETUP_TOKEN }}
-  #      run: |
-  #        echo "Deleting the current repository..."
-  #        curl -X DELETE \
-  #          -H "Accept: application/vnd.github+json" \
-  #          -H "Authorization: token $GITHUB_TOKEN" \
-  #          "https://api.github.com/repos/${{ github.repository }}"
+  delete-repo:
+    runs-on: ubuntu-latest
+    needs:
+      - create-repo
+      - remove-terraform-cloud-personal-token
+    steps:
+      - name: Delete this repository
+        env:
+          GITHUB_TOKEN: ${{ secrets.SETUP_TOKEN }}
+        run: |
+          echo "Deleting the current repository..."
+          curl -X DELETE \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}"
   
       
